@@ -1,0 +1,64 @@
+---
+title: "oncogeneCorrelationCode"
+author: "Hailey Johnson"
+format: html
+editor: visual
+---
+
+## Discover oncogenes which are amplified together!
+
+2 May 2023
+
+-   We want to make 24 figures for each of the most recurrent oncogenes from the paper. Using the ampIndex, we can know which genes came from the same samples and amplicon.
+
+-   I'm thinking we should run a for loop through every gene, and make a big data frame with each gene and which ones correlate with it? Or make a temporary data frame for each gene and plot each in a for loop?
+
+Setting up data again to make life easier:
+
+```{r}
+library(tidyverse)
+library(readxl)
+overlap = read_excel("/Users/haileyjohnson/Desktop/ecDNA_Project/cleanedOverlap.xlsx") #IMPORTANT, THIS IS THE CLEANED OVERLAP SET WHERE WE PICKED THE MOST RECURRENT ISOFROM OF EACH GENE!
+```
+
+```{r}
+oncogenes = c("MDM2", "MYC", "EGFR", "CDK4", "ERBB2", "SOX2", "TERT", "CCND1", "E2F3", "CCNE1", "CDK6", "MDM4", "NEDD9", "MCL1", "AKT3", "BCL2L1", "ZNF217", "KRAS", "PDGFRA", "AKT1", "MYCL", "NKX2-1", "IGF1R", "PAX8") 
+#These are the 24 more recurrent genes in amplicons from the paper
+
+overlap = overlap[which(overlap$oncogene %in% oncogenes), ] 
+#select only those 24 genes to look at in our dataframe...
+```
+
+Now make 24 plots...
+
+```{r}
+
+#Run a for loop to see every gene and how other genes are involved with it
+
+for (gene in oncogenes) {
+  
+  temp = overlap[which(overlap$oncogene == gene), ]
+  ampliconsInvolved = unique(temp$ampIndex)
+  rm(temp)
+  #This found which amplicon indices are involved with the gene being looked at in the for loop...
+  
+  #If a gene is found in the same amplicon index as one with a gene we are looking at, then they are amplified together.
+  importantAmps = overlap[which(overlap$ampIndex %in% ampliconsInvolved),]
+  
+  #Make a data frame we can plot now!
+  plot = importantAmps %>% group_by(oncogene) %>% summarise(occurrence = n()) %>% arrange(desc(occurrence))
+  plot = plot %>% filter(oncogene != gene) #We don't need to see how often the gene is involved in itself...
+  
+  
+  p = ggplot(plot, aes(x = factor(oncogene, levels = pull(plot, oncogene)), y = occurrence)) +
+  geom_bar(stat = "identity", fill= "cornflowerblue") +
+  xlab("Oncogene") +
+  ylab("Occurrence") +
+    labs(title = paste0(gene, " correlated amplified oncogenes")) +
+  theme(axis.text.x = element_text(angle=90, vjust = 0.5, hjust=1), axis.title.x = element_text(size = 10))
+
+  ggsave(plot = p, filename = paste0(gene, ".png"))
+  
+  rm(temp,ampliconsInvolved, importantAmps, plot) #cleaning global environment
+}
+```

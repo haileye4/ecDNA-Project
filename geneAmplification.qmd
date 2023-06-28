@@ -1,0 +1,207 @@
+---
+title: "Oncogene Amplification"
+author: "Hailey Johnson"
+format: html
+editor: visual
+---
+
+## Next... Comparing oncogenes amplification with clean data
+
+1.  Look at oncogene together ONLY on different chromosomes! Not on the same chromosome...
+
+Actually just do [MYC]{.underline} right now so we can see... not make it too complex... Just take genes FROM DIFFERENT CHROMOSOMES!
+
+1.  Make another file that lists the number of times that gene is co-amplified with MYC on the ***same*** molecule
+2.  Use original cleanOverlap data... half arm data is too small but good to have still...
+
+[**Whats the percentage that an oncogene and MYC are together on the same molecule?**]{.underline} (Using new stringent 333 oncogene list)
+
+```{r}
+library(tidyverse)
+library(readxl)
+
+oncogenes = read.table("/Users/haileyjohnson/Desktop/ecDNA_Project/data_cleaning/oncoKB.oncogenes.txt")
+oncogenes = pull(oncogenes, V1)
+
+overlap = read_excel("/Users/haileyjohnson/Desktop/ecDNA_Project/cleanedOverlap.xlsx")
+#INNPUT DATAFRAME HERE.. Just do overlap...^^
+
+#Get specific oncogenes from Dr. Zhang's list
+overlap = overlap %>% filter(oncogene %in% oncogenes)
+#Went from 21,639 to 8459 observations
+
+#Right now we are just looking a MYC... pick any oncogene NOT on chromosome 8.
+
+total = overlap %>% count(oncogene)
+total = total$n[which(total$oncogene == "MYC")]
+
+MYC = overlap[which(overlap$oncogene == "MYC"), ]
+
+#Now lets decide which molecules (amplicons) have MYC on them...
+
+uniqueMolecules = unique(MYC$ampIndex)
+
+#Now, lets look at the data and figure out which other oncogees are related to MYC and how many are in the same sample, same amplicon, or BOTH?
+
+overlapClean = overlap[which(overlap$chr != "chr8"), ]
+overlapClean = overlapClean %>% filter(ampIndex %in% uniqueMolecules)
+
+genecount = overlapClean %>% count(oncogene) %>% arrange(desc(n)) #Lets only seelct top 24 genes that correlate with MYC the most...
+genecount = genecount %>% mutate(ratio = (n/total))
+
+importantGenes = genecount[c(1:20),] %>% pull(oncogene) #pulls the 30 genes with the most occurance with MYC
+
+#make a dataframe, first is oncogene, second is percentage, third is "both", "sample", "amplicon"
+
+genes = c()
+count = c()
+
+for (gene in importantGenes) {
+  
+  #First count how many are in same molecule... side note, if they are on the same amplicon they must be in the same sample
+  temp = overlapClean[which(overlapClean$oncogene == gene), ]
+  n = (length(temp$oncogene) / total) #percentage of all occurrences of MYC
+  
+  genes = append(genes, gene)
+  count = append(count, n)
+}
+
+plot = tibble(genes, count)
+
+```
+
+```{r}
+order = plot %>% arrange(desc(count)) %>% pull(genes)
+
+ggplot(plot, aes(x = factor(genes, levels = order), y = count)) +
+  geom_bar(stat = "identity", fill = "cornflowerblue") +
+  xlab("Oncogene") +
+  ylab("Percentage Correlation") +
+  labs(title = "MYC Molecule Relation to Oncogenes (333 oncogene collection)") +
+  geom_text(aes(label=paste0(round(count, 2)*100,"%"))) +
+  theme(axis.text.x = element_text(angle=90, vjust = 0.5, hjust=1), axis.title.x = element_text(size = 10))
+```
+
+Send "genecount" data frame to Dr. Zhang...
+
+```{r}
+library(xlsx)
+write.xlsx(genecount, "MYCAmplifiedOncogenes.xlsx")
+```
+
+***Which oncogenes are being amplified together recurrently?*** 1 figure of 24 paper oncogenes... what percentage of amplicons for each of the 24 genes are also being amplified with other oncogenes (333 list) from other chromosomes?
+
+look for samples that co-amplify MYC with other oncogene(s) on the same molecule, the other oncogene(s) should come from chromosomes other than chr8 (where MYC is)
+
+```{r}
+library(tidyverse)
+library(readxl)
+
+oncogenes = read.table("/Users/haileyjohnson/Desktop/ecDNA_Project/data_cleaning/oncoKB.oncogenes.txt")
+oncogenes = pull(oncogenes, V1)
+
+overlap = read_excel("/Users/haileyjohnson/Desktop/ecDNA_Project/cleanedOverlap.xlsx")
+#overlap = overlap %>% filter(oncogene %in% oncogenes)
+
+paperGenes = c("MDM2", "MYC", "EGFR", "CDK4", "ERBB2", "SOX2", "TERT", "CCND1", "E2F3", "CCNE1", "CDK6", "MDM4", "NEDD9", "MCL1", "AKT3", "BCL2L1", "ZNF217", "KRAS", "PDGFRA", "AKT1", "MYCL", "NKX2-1", "IGF1R", "PAX8")
+
+# Note: 3 of the 24 paper oncogenes are not included in the 333 list Dr. Zhang gave me
+
+allGenes = c(oncogenes, paperGenes)
+overlap = overlap %>% filter(oncogene %in% allGenes)
+rm(allGenes) #environment cleaning... Just so we can include the 3 genes which aren't included in the 333 list
+
+percentage = c() #this will store the ratio of samples amplified with interchromosomal oncogenes to all samples of that gene
+test = c()
+
+for (gene in paperGenes) {
+  totalSamples = length(which(overlap$oncogene == gene)) #how many samples including that oncogene are there?
+  
+  temp = overlap %>% filter(oncogene == gene)
+  uniqueMolecules = unique(temp$ampIndex) #extracts the unique amplicon molecules including that oncogene
+  chromosome = unique(temp$chr)[1] #decides which chromosome the oncogene is on
+  
+  
+  temp = overlap %>% filter(ampIndex %in% uniqueMolecules) %>% filter(oncogene != gene) %>% filter(chr != chromosome) #take out amplicons which uniquely are also associated with the gene we are looking at, filters out the genes so we are only looking at OTHER oncogenes, and lastly removes oncogenes which are on the same chromosome... we only want to assess interchromosomal amplification...
+  
+  x = length(unique(temp$ampIndex)) / totalSamples
+  
+  percentage = append(percentage, x)
+}
+
+interchrAmp = tibble(paperGenes, percentage)
+rm(x, gene, chromosome, temp, totalSamples) #environment cleaning...
+```
+
+Wow, actually super interesting because I thought almost all samples would be coamplified with other oncogenes! But I guess because it is from other chromosomes...
+
+```{r}
+#plot interchrAmp!!
+order = interchrAmp %>% arrange(desc(percentage)) %>% pull(paperGenes)
+
+ggplot(interchrAmp, aes(x = factor(paperGenes, levels = order), y = percentage)) +
+  geom_bar(stat = "identity", fill = "cornflowerblue") +
+  xlab("Oncogene") +
+  ylab("Percentage Samples Co-Amplified") +
+  labs(title = "Interchromosomal Oncogene Amplification Ratio") +
+  geom_text(aes(label=paste0(round(percentage, 2)*100,"%")), size = 2.7, vjust = -0.5) +
+  theme(axis.text.x = element_text(angle=90, vjust = 0.5, hjust=1), axis.title.x = element_text(size = 10))
+```
+
+Interesting, but how do you also take into account the sample size? PDGFRA and PAX8 have a much smaller...
+
+oncogenes amplified together on the same molecule and are they using each other's enhancers?
+
+This previous code shows sample differences in the paper genes just for reference...
+
+```{r}
+library(tidyverse)
+library(readxl)
+overlap = read_excel("/Users/haileyjohnson/Desktop/ecDNA_Project/cleanedOverlap.xlsx")
+#INNPUT DATAFRAME HERE.. FIRST DO 20MB CLEAN AND THEN HALF ARM CLEAN...^^
+#oncogenes = unique(overlap$oncogene)
+oncogenes = c("MDM2", "MYC", "EGFR", "CDK4", "ERBB2", "SOX2", "TERT", "CCND1", "E2F3", "CCNE1", "CDK6", "MDM4", "NEDD9", "MCL1", "AKT3", "BCL2L1", "ZNF217", "KRAS", "PDGFRA", "AKT1", "MYCL", "NKX2-1", "IGF1R", "PAX8")
+genes = c()
+occurrence = c()
+for (gene in oncogenes) {
+  temp = overlap[which(overlap$oncogene == gene), ]
+  n = length(temp$oncogene)
+    #gets number of genes amplified in our data
+  genes = append(genes, gene)
+  occurrence = append(occurrence, n)
+}
+temp = tibble(genes, occurrence) %>% arrange(desc(occurrence))
+temp = temp[1:24, ] #pick 24 most frequently amplified oncogenes!
+highgenes = pull(temp, genes)
+rm(n,genes,gene,occurrence)
+ampliconTypes = unique(overlap$amplicon)
+oncogenes = c()
+amplicon = c()
+occurrence = c()
+for (gene in highgenes) {
+  temp = overlap[which(overlap$oncogene == gene), ]
+  for (type in ampliconTypes) {
+    n = sum(temp$amplicon == type)
+    #gets number of type of amplicon on that oncogene
+    oncogenes = append(oncogenes, gene)
+    amplicon = append(amplicon, type)
+    occurrence = append(occurrence, n)
+  }
+}
+#cleaning
+rm(n,type,gene,ampliconTypes)
+plot = tibble(oncogenes, amplicon, occurrence)
+plot$amplicon = factor(plot$amplicon, levels = c("Heavily-rearranged", "BFB", "Circular"))
+
+#we are going to manually order them lol...
+ordering = plot[which(plot$amplicon == "Circular"),] %>% arrange(desc(occurrence))
+order = pull(ordering, oncogenes)
+rm(ordering) #cleaning
+ggplot(plot, aes(x = factor(oncogenes, levels = highgenes), y = occurrence, fill = amplicon)) +
+  geom_bar(stat = "identity") +
+  xlab("Oncogene") +
+  ylab("Amplicons") +
+  labs(title = "24 Recurrent Oncogenes") +
+  scale_fill_manual(values = c("#CC99CC", "cornflowerblue", "#9966FF")) +
+  theme(axis.text.x = element_text(angle=90, vjust = 0.5, hjust=1), axis.title.x = element_text(size = 10))
+```

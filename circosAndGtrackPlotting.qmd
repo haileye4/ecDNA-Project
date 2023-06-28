@@ -1,0 +1,379 @@
+---
+title: "Circos and Gtracks"
+author: "Hailey Johnson"
+format: html
+editor: visual
+---
+
+In order to make circos plots and Tracks, we first need to make a .bedpe file! This is a typical bed file, but the first few columns is one amplicon genome segment and the other is another overlapping gene from the same amplicon.
+
+We should be able to use the amplicon index we made earlier to be able to track what is overlapping with each other..
+
+I think we are gonna JUST plot intersections with MYC... maybe just label MYC and ERBB2 and see what other areas are connected with MYC from my bedpe file.
+
+Indicate [transparency or count]{.underline}
+
+We want six columns... the first three are the chrom, start, stop, of the first amplicon segment and the second is chrom, start, stop of the second amp segment
+
+**Make MYC and FRIENDS data frame**
+
+```{r}
+library(tidyverse)
+library(readxl)
+overlap = read_excel("/Users/haileyjohnson/Desktop/ecDNA_Project/cleanedOverlap.xlsx")
+
+#use these to specify a specific kind of cancer you want to build an Rcircos plot on:
+#overlap = overlap[which(overlap$cancer == "Breast"), ]
+#overlap = overlap[which(overlap$cancer == "Colorectal"), ] <- NOT INVOLVED WITH MYC
+#overlap = overlap[which(overlap$cancer == "Prostate"), ]
+#overlap = overlap[which(overlap$cancer == "Lung Squamous cell" | overlap$cancer == "Lung Adeno"), ]
+#overlap = overlap[which(overlap$cancer == "Glioblastoma"), ]
+#overlap = overlap[which(overlap$cancer == "Sarcoma"), ] <- NOT INVOLVED WITH MYC
+#overlap = overlap[which(overlap$cancer == "Ovarian"), ]
+#overlap = overlap[which(overlap$cancer == "Bladder"), ]
+#overlap = overlap[which(overlap$cancer == "Skin"), ]
+#overlap = overlap[which(overlap$cancer == "Esophageal"), ]
+overlap = overlap[which(overlap$cancer == "Liver"), ]
+
+#use ampindex to make our new dataframe and create a for loop...
+
+#pick only MYC and ERBB2... and connections to it
+
+geneConnections = overlap[which(overlap$oncogene == "MYC"), ] %>% pull(ampIndex)
+
+overlap = overlap[which(overlap$ampIndex %in% geneConnections), ]
+#now we have a dataframe with amplicons connected to MYC and ERBB2
+
+chr1 = c()
+start1 = c()
+stop1 = c()
+
+chr2 = c()
+start2 = c()
+stop2 = c()
+
+amplicon = c()
+oncogene = c()
+
+for (amp in unique(overlap$ampIndex)) {
+  temp = overlap[which(overlap$ampIndex == amp), ]
+  
+  if (length(temp$ampIndex) == 1) {
+    next
+  } #if there's only 1 segment, it isn't related to any other genes and we can skip it
+  
+  mycdata = temp[which(temp$oncogene == "MYC"), ]
+  temp = temp[-which(temp$oncogene == "MYC"), ]
+  
+  for (gene in unique(temp$oncogene)) {
+    new = temp[which(temp$oncogene == gene), ]
+    
+    chr1 = append(chr1, mycdata$Chr[1])
+    start1 = append(start1, mycdata$Start[1])
+    stop1 = append(stop1, mycdata$Stop[1])
+    #appends MYC information...
+    
+    amplicon = append(amplicon, amp)
+    oncogene = append(oncogene, gene)
+    
+    chr2 = append(chr2, new$chr[1])
+    start2 = append(start2, new$start[1])
+    stop2 = append(stop2, new$stop[1])
+  }
+  
+  
+}
+
+MYCandFriends = tibble(chr1, start1, stop1, chr2, start2, stop2, amplicon, oncogene)
+
+rm(amp, geneConnections, mycdata)
+```
+
+Gtrack genominc bings?
+
+YAY! Now we have "MYCandFriends" we can input into the circos_example.R script! but we can't have the 7th and 8th column so lets get rid of that
+
+```{r}
+MYCandFriends = MYCandFriends[ , -c(7,8)]
+```
+
+```{r}
+
+# Install and load package
+#install.packages("RCircos")
+library(RCircos)
+
+# Set working directory
+setwd("/Users/haileyjohnson/Desktop/ecDNA_Project/figures/RCircosPlots")
+
+######################################################################
+# Input a bedpe file that contains the looping/interaction data of interest
+# It is important here to ensure all non-canoncial chromosomes are filtered out (i.e. chrM, etc)
+
+Translocations <- MYCandFriends
+                             
+# These are the headers for the bedpe file. There should only be 6 columns with the chromosome, start position, and stop
+# position for both anchors of a chromatin interaction or WGS breakpoints
+names(Translocations) <- c("Chromosome", "chromStart", "chromEnd", "Chromosome.1", "chromStart.1", "chromEnd.1")
+
+Translocation <- as.data.frame(Translocations)
+
+# Exclude chromosomes that you are not interested in plotting
+chr.exclude <- c("chrY")
+
+# Use this if you want to plot the entire genome
+#chr.exclude = NULL
+
+# This inputs the cytobands coloring the different regions of each chromosome
+data(UCSC.HG19.Human.CytoBandIdeogram)
+cyto.info <- UCSC.HG19.Human.CytoBandIdeogram;
+
+# Define the number of tracks you want inside the circle/chromosome ring (I think you can have as many tracks as you wish)
+tracks.inside <- 2
+
+# Define the number of tracks you want outside the circle/chromosome ring
+tracks.outside <- 0
+
+# Define the circos plot
+RCircos.Set.Core.Components(cyto.info, chr.exclude, tracks.inside, tracks.outside)
+
+# Begin building circos plot and rename the plot... input the cancer type you are looking at in the name EDIT HERE.
+out.file <- "MYCandFriends_Liver.pdf"
+ pdf(file=out.file, height=10, width=10, compress=TRUE)
+ RCircos.Set.Plot.Area();
+ RCircos.Chromosome.Ideogram.Plot();
+
+# This track is the chromsomal interaction
+track.num <- 2;
+RCircos.Link.Plot(Translocation, track.num, TRUE, is.sorted=FALSE)
+ ribbon.data <- Translocations
+ colnames(ribbon.data) <- c("chromA", "chromStartA", "chromEndA", "chromB", "chromStartB", "chromEndB")
+
+dev.off()
+```
+
+for (i in length(temp\$ampIndex)) { relations = c((i+1):length(temp\$ampIndex)) #iterate through the list and make a combination of data...
+
+for (j in relations) { chr1 = append(chr1, temp\$Chr\[i\]) start1 = append(start1, temp\$Start\[i\]) stop1 = append(stop1, temp\$Stop\[i\]) amplicon = append(amplicon, amp)
+
+chr2 = append(chr2, temp\$Chr\[j\]) start2 = append(start2, temp\$Start\[j\]) stop2 = append(stop2, temp\$Stop\[j\]) }
+
+}
+
+Maybe we should filter out certain oncogenes which have an occurance of greater than 8 or something... Or filter by cancer type....
+
+Cancer Types to look at:
+
+-   breast
+
+-   colon
+
+-   prostate
+
+-   Lung squamos and lung adno
+
+-   glioblastoma
+
+-   sarcome
+
+If they occur more than 10 and aren't on the same ampIndex
+
+NEW IDEA June 13 2023:
+
+-   Go back and who cAres about oncogenes it overlaps with, just take the segments! That will lessen the number of lines connectiOn in circos plots
+
+```{r}
+library(tidyverse)
+library(readxl)
+library(data.table)
+
+# amplicon data
+
+amplicon = read_excel("/Users/haileyjohnson/Desktop/ecDNA_Project/ecDNA_Raw_Data.xlsx", sheet = 1)
+
+#Right now there's giving a unique index to each amplicon in each index
+amplicon$index <- paste0("amp",seq(1:nrow(amplicon)))
+
+#length(unique(amplicon$sample_barcode)) #Right now there's 1348 patient samples, and 5791 amplicons from thos patients!
+
+#Time to actually separate out each chromosomal region
+amplicon <- amplicon %>% separate_rows(amplicon_intervals, sep = ",")
+
+amplicon <- amplicon %>% separate(amplicon_intervals, c("chr", "interval"), ":")
+amplicon$chr = paste0("chr", amplicon$chr)
+
+amplicon <- amplicon %>% separate(interval, c("start", "end"), "-")
+
+amplicon$start <- as.numeric(amplicon$start)
+amplicon$end <- as.numeric(amplicon$end)
+
+#We want to remove all the amplicons that are linear?
+amplicon <- amplicon[amplicon$amplicon_classification != "Linear",]
+
+meta = read_excel("/Users/haileyjohnson/Desktop/ecDNA_Project/ecDNA_Raw_Data.xlsx", sheet = 3)
+
+amplicon <- merge(amplicon, meta, by = "sample_barcode")
+
+columns = c("chr", "start", "end", "amplicon_classification", "sample_barcode", "index", "lineage")
+
+#put it all together and make the bedfile...
+bedFile = amplicon[ ,columns]
+bedFile = bedFile %>% filter(chr != "chrGL000220.1")
+bedFile = bedFile %>% filter(chr != "chrGL000210.1")
+
+#there's actuall way more than I thought...
+bedFile = bedFile[which(!str_detect(bedFile$chr, "chrGL")),]
+
+rm(meta, amplicon, columns)
+```
+
+Now we have a file telling us every segment related to the amplicons, now lets use our clean data to decide which amplicons are related to MYC
+
+```{r}
+overlap = read_excel("/Users/haileyjohnson/Desktop/ecDNA_Project/cleanedOverlap.xlsx")
+
+#use these to specify a specific kind of cancer you want to build an Rcircos plot on:
+#overlap = overlap[which(overlap$cancer == "Breast"), ]
+#bedFile = bedFile[which(bedFile$lineage == "Breast"),]
+
+#overlap = overlap[which(overlap$cancer == "Colorectal"), ] <- NOT INVOLVED WITH MYC
+
+#overlap = overlap[which(overlap$cancer == "Prostate"), ]
+#bedFile = bedFile[which(bedFile$lineage == "Prostate"),]
+
+overlap = overlap[which(overlap$cancer == "Lung Squamous cell" | overlap$cancer == "Lung Adeno"), ]
+bedFile = bedFile[which(bedFile$lineage == "Lung Squamous cell" | bedFile$lineage == "Lung Adeno"), ]
+
+#overlap = overlap[which(overlap$cancer == "Glioblastoma"), ]
+#overlap = overlap[which(overlap$cancer == "Sarcoma"), ] <- NOT INVOLVED WITH MYC
+
+#overlap = overlap[which(overlap$cancer == "Ovarian"), ]
+#bedFile = bedFile[which(bedFile$lineage == "Ovarian"),]
+
+#overlap = overlap[which(overlap$cancer == "Bladder"), ]
+
+#overlap = overlap[which(overlap$cancer == "Skin"), ]
+#bedFile = bedFile[which(bedFile$lineage == "Skin"),]
+
+#overlap = overlap[which(overlap$cancer == "Esophageal"), ]
+
+#overlap = overlap[which(overlap$cancer == "Liver"), ]
+#bedFile = bedFile[which(bedFile$lineage == "Liver"),]
+
+#use ampindex to make our new dataframe and create a for loop...
+
+#pick only MYC and ERBB2... and connections to it
+
+geneConnections = overlap[which(overlap$oncogene == "MYC"), ] %>% pull(ampIndex)
+
+bedFile = bedFile[which(bedFile$index %in% geneConnections), ]
+#now we have a dataframe with amplicons connected to MYC and ERBB2
+
+temp = overlap[which(overlap$oncogene == "MYC"),]
+mycChr = temp$chr[1]
+mycStart = temp$start[1]
+mycStop = temp$stop[1]
+
+#Now for the for loop
+chr1 = c()
+start1 = c()
+stop1 = c()
+
+chr2 = c()
+start2 = c()
+stop2 = c()
+
+amplicon = c()
+
+for (amp in unique(bedFile$index)) {
+  
+  temp = bedFile[which(bedFile$index == amp), ]
+  
+  if (length(temp$index) == 1) {
+    next
+  } #if there's only 1 segment, it isn't related to any other genes and we can skip it
+  
+  
+  for (segment in c(1:length(temp$chr))) {
+    new = temp[segment, ]
+    
+    chr1 = append(chr1, mycChr)
+    start1 = append(start1, mycStart)
+    stop1 = append(stop1, mycStop)
+    #appends MYC information...
+    
+    amplicon = append(amplicon, amp)
+    
+    chr2 = append(chr2, new$chr[1])
+    start2 = append(start2, new$start[1])
+    stop2 = append(stop2, new$end[1])
+  }
+  
+  
+}
+
+MYCandFriends = tibble(chr1, start1, stop1, chr2, start2, stop2, amplicon)
+
+rm(amp, geneConnections, amplicon, chr1, chr2, mycChr, mycStart, mycStop, segment, start1, start2, stop1, stop2, new, temp)
+```
+
+Now we can plot it...
+
+```{r}
+MYCandFriends = MYCandFriends[ , -7]
+```
+
+```{r}
+
+# Install and load package
+#install.packages("RCircos")
+library(RCircos)
+
+# Set working directory
+setwd("/Users/haileyjohnson/Desktop/ecDNA_Project/figures/RCircosPlotsSegments")
+
+######################################################################
+# Input a bedpe file that contains the looping/interaction data of interest
+# It is important here to ensure all non-canoncial chromosomes are filtered out (i.e. chrM, etc)
+
+Translocations <- MYCandFriends
+                             
+# These are the headers for the bedpe file. There should only be 6 columns with the chromosome, start position, and stop
+# position for both anchors of a chromatin interaction or WGS breakpoints
+names(Translocations) <- c("Chromosome", "chromStart", "chromEnd", "Chromosome.1", "chromStart.1", "chromEnd.1")
+
+Translocation <- as.data.frame(Translocations)
+
+# Exclude chromosomes that you are not interested in plotting
+#chr.exclude <- c("chrY")
+
+# Use this if you want to plot the entire genome
+chr.exclude = NULL
+
+# This inputs the cytobands coloring the different regions of each chromosome
+data(UCSC.HG19.Human.CytoBandIdeogram)
+cyto.info <- UCSC.HG19.Human.CytoBandIdeogram;
+
+# Define the number of tracks you want inside the circle/chromosome ring (I think you can have as many tracks as you wish)
+tracks.inside <- 2
+
+# Define the number of tracks you want outside the circle/chromosome ring
+tracks.outside <- 0
+
+# Define the circos plot
+RCircos.Set.Core.Components(cyto.info, chr.exclude, tracks.inside, tracks.outside)
+
+# Begin building circos plot and rename the plot... input the cancer type you are looking at in the name EDIT HERE.
+out.file <- "MYCandFriends_Lung.pdf"
+ pdf(file=out.file, height=10, width=10, compress=TRUE)
+ RCircos.Set.Plot.Area();
+ RCircos.Chromosome.Ideogram.Plot();
+
+# This track is the chromsomal interaction
+track.num <- 2;
+RCircos.Link.Plot(Translocation, track.num, TRUE, is.sorted=FALSE)
+ ribbon.data <- Translocations
+ colnames(ribbon.data) <- c("chromA", "chromStartA", "chromEndA", "chromB", "chromStartB", "chromEndB")
+
+dev.off()
+```

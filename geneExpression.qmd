@@ -1,0 +1,942 @@
+---
+title: "Oncogene Expression"
+author: "Hailey Johnson"
+format: html
+editor: visual
+---
+
+```{r}
+library(tidyverse)
+library(readxl)
+
+PCWAGgeneExpression = read_csv("/Users/haileyjohnson/Desktop/ecDNA_Project/gene_expression/geneExpressionSA.csv")
+IDs = read_excel("/Users/haileyjohnson/Desktop/ecDNA_Project/gene_expression/IDConversion.xlsx")
+overlap = read_excel("/Users/haileyjohnson/Desktop/ecDNA_Project/cleanedOverlap.xlsx")
+
+colnames(IDs) = IDs[2,]
+IDs = IDs[-1,]
+IDs = IDs[-1,] #run this twice just to get rid of NA clumn and column names row...
+
+IDs = IDs[ , c("icgc_sample_id", "icgc_specimen_id", "submitted_specimen_id")]
+```
+
+Now we have our data sets created how we want them... We need to convert sample IDs from the PCWAG data set AND the TCGA data set. The PCWAG data is in the form of "SP" rather than "SA", and the TCGA data has an extra letter at the end of the ID...
+
+## PCWAG ID TRANSLATION
+
+First, add a column to convert an SA ID to an SP ID in "overlap".
+
+```{r}
+colnames(IDs) = c("sample_barcode", "icgc_specimen_id", "submitted_specimen_id")
+PCWAGid = merge(IDs, overlap, by ="sample_barcode")
+```
+
+## TCGA ID TRANSLATION
+
+```{r}
+TCGAgeneExpression = read_tsv("/Users/haileyjohnson/Desktop/ecDNA_Project/gene_expression/GDC-PANCAN.htseq_fpkm-uq.tsv")
+
+# Remove the last letter from each string in column name
+colnames(TCGAgeneExpression) <- substr(colnames(TCGAgeneExpression), 1, nchar(colnames(TCGAgeneExpression)) - 1)
+
+```
+
+## Convert ensemble gene ID to gene name for PCWAG and TCGA data sets...
+
+We want to use the "[annotables]{.underline}" package to do our conversions... seems to be the best way. First lets do it for the PCWAG IDs...
+
+```{r}
+#install.packages("devtools")
+#devtools::install_github("stephenturner/annotables")
+
+library(annotables)
+infile = PCWAGgeneExpression
+# Rename the column in the infile dataset
+colnames(infile)[colnames(infile) == 'feature'] <- 'ENSEMBL'
+
+# Select the desired columns for the inner join
+genes_of_interest <- infile %>%
+  select(ENSEMBL) %>%
+  distinct()
+
+genes_of_interest = genes_of_interest %>% mutate(ENSEMBL = substr(genes_of_interest$ENSEMBL, 1, 15))
+
+# Perform the inner join based on ENSEMBL IDs
+result <- inner_join(genes_of_interest, grch38, by = c("ENSEMBL" = "ensgene"))
+
+#WE DID IT... Result now has our cooresponding gene symbol and ensembl ID!
+result = result[ , c("ENSEMBL", "symbol")]
+
+rm(infile, genes_of_interest) #environment cleaning
+```
+
+```{r}
+colnames(PCWAGgeneExpression)[colnames(PCWAGgeneExpression) == 'feature'] <- 'ENSEMBL'
+PCWAGgeneExpression = PCWAGgeneExpression %>% mutate(ENSEMBL = substr(PCWAGgeneExpression$ENSEMBL, 1, 15))
+#Hsve to actually fix the ensembl IDs because they all have ".#" attached to them which I assume is unneccessary...
+
+PCWAGgeneExpression = merge(result, PCWAGgeneExpression, by = "ENSEMBL")
+#Now PCWAG gene expression has the corresponding gene symbols!
+rm(result)
+```
+
+TCGA Dataset...
+
+```{r}
+library(annotables)
+library(tidyverse)
+
+infile = TCGAgeneExpression
+# Rename the column in the infile dataset
+colnames(infile)[colnames(infile) == 'xena_sampl'] <- 'ENSEMBL'
+
+# Select the desired columns for the inner join
+genes_of_interest <- infile %>%
+  select(ENSEMBL) %>%
+  distinct()
+
+genes_of_interest = genes_of_interest %>% mutate(ENSEMBL = substr(genes_of_interest$ENSEMBL, 1, 15))
+
+# Perform the inner join based on ENSEMBL IDs
+result <- inner_join(genes_of_interest, grch38, by = c("ENSEMBL" = "ensgene"))
+
+#WE DID IT... Result now has our cooresponding gene symbol and ensembl ID!
+result = result[ , c("ENSEMBL", "symbol")]
+
+rm(infile, genes_of_interest) #environment cleaning
+
+colnames(TCGAgeneExpression)[colnames(TCGAgeneExpression) == 'xena_sampl'] <- 'ENSEMBL'
+
+# Check column names for duplicates
+duplicated_names <- duplicated(names(TCGAgeneExpression))
+if (any(duplicated_names)) {
+  print("Duplicate column names detected:")
+  print(names(TCGAgeneExpression)[duplicated_names])
+} else {
+  print("No duplicate column names.")
+}
+#Okay... SO there are a few duplicate samples we need to get rid of...
+# Identify duplicated column names
+duplicated_names <- names(TCGAgeneExpression)[duplicated(names(TCGAgeneExpression))]
+# Select out one of each duplicated column name
+selected_columns <- names(TCGAgeneExpression)[!duplicated(names(TCGAgeneExpression))]
+# Select the columns from the data frame
+TCGAgeneExpression <- TCGAgeneExpression[, selected_columns]
+
+#There are also ensembl ID's that don't correlate to any symbol from our data, I'm gonna clean those
+# Remove rows with empty strings using filter()
+result <- result %>% filter(symbol != "")
+
+#now continue:
+TCGAgeneExpression = TCGAgeneExpression %>% mutate(ENSEMBL = substr(TCGAgeneExpression$ENSEMBL, 1, 15))
+#Hsve to actually fix the ensembl IDs because they all have ".#" attached to them which I assume is unneccessary...
+
+TCGAgeneExpression = merge(result, TCGAgeneExpression, by = "ENSEMBL")
+#Now TCGA gene expression has the corresponding gene symbols!
+rm(result, duplicated_names, selected_columns)
+```
+
+After all that code, we should have *TCGAgeneExpression* and *PCWAGgeneExpression* which both give us the correct gene expression data for all samples and corresponds with each gene. Now what we can do to clean up our data is go through and
+
+1.  Select all those samples which are in our ecDNA data (5,022 samples from sheet 3). The 1,348 with amplicon data will be compared to the rest of the 5,022 which don't have amplicon data.
+2.  Select only the oncogenes we are looking at...
+
+First, select samples which are in our data set. Lets transform TCGA and PCWAG
+
+```{r}
+#TCGA ID's and PCWAG "SP" IDs...
+
+allSamples = read_excel("/Users/haileyjohnson/Desktop/ecDNA_Project/ecDNA_Raw_Data.xlsx", sheet = 3)
+
+count = sum(grepl("^T", unique(allSamples$sample_barcode)))
+print(count) 
+#There are 3731 samples from the TCGA dataset
+count = sum(grepl("^S", unique(allSamples$sample_barcode)))
+print(count)
+#There are 1291 samples from the PCWAG dataset in our data... so 5022 total
+
+#There are 3212 PATIENTS and 5022 SAMPLES from all those patients
+
+PCWAGtemp = merge(IDs, allSamples, by = "sample_barcode")
+# There are 1225/1291 samples in our ecDNA data with an ID conversion.
+
+importantIDs = unique(PCWAGtemp$icgc_specimen_id) #appends all of the PCWAG ID's
+
+#importantIDs = c()
+importantIDs = append(importantIDs, grep("^T", unique(allSamples$sample_barcode), value = TRUE)) #appends all the TCGA ones...
+
+#PCWAG Data...
+names = which(colnames(PCWAGgeneExpression) %in% importantIDs)
+PCWAGgeneExpression = PCWAGgeneExpression[ , c(1, 2, names)]
+#The PCWAG gene expression data only has 156 samples out of 1225 samples that start with "SA" from our dataset...
+
+#TCGA Data...
+names = which(colnames(TCGAgeneExpression) %in% importantIDs)
+TCGAgeneExpression = TCGAgeneExpression[ , c(1, 2, names)]
+#The TCGA gene expression dataset only has 1934 out of 3731 TCGA samples from our dataset
+
+rm(PCWAGtemp, count, names)
+```
+
+We have "includedPCWAGgenExp" and "includedTCGAgeneExp" which are gene expression data for those samples specifically in our ecDNA data. Now, we ant to select specific oncogenes...
+
+```{r}
+oncogenes = unique(overlap$oncogene) #Oncogenes we filtered out to study earlier
+
+PCWAGgeneExpression = PCWAGgeneExpression %>% filter(symbol %in% oncogenes)
+TCGAgeneExpression = TCGAgeneExpression %>% filter(symbol %in% oncogenes)
+
+rm(oncogenes)
+```
+
+Now "PCWAGgeneExpression" and "TCGAgeneExpression" should be cleaned up for oncogenes we want.
+
+## Convert all values to log2(fpkm-uq+1)
+
+-   The TCGA data set has log2(fpkm-uq+1), while the PCAWG one has log2(fpkm-uq+0.001), so we need some conversion to do. We can make all of them log2(fpkm-uq+1)
+
+-   We need to convert the PCWAG values to the same as the TCGA data set...
+
+-   just seem what the fpkm data look like without log...
+
+-   [**UPDATE**]{.underline}: This following block is unneeded now because we are doing the two datasets differently
+
+```{r}
+
+for (col in colnames(includedPCWAGgeneExp[, -c(1, 2)])) {
+  includedPCWAGgeneExp <- includedPCWAGgeneExp %>%
+    mutate(!!col := log2((2^(.data[[col]])) - 0.001 + 1))
+}
+# Apply the conversion formula to the 'expression' column
+#includedPCWAGgeneExp$SP111095 <- log2(2^(includedPCWAGgeneExp$SP111095) - 0.001 + 1)
+
+rm(col)
+
+# Here I just want to see what the fpkm-uq values look like without a log transformation
+for (col in colnames(includedTCGAgeneExp[, -c(1, 2)])) {
+  includedTCGAgeneExp <- includedTCGAgeneExp %>%
+    mutate(!!col := (2^(.data[[col]]) - 1))
+}
+
+for (col in colnames(includedPCWAGgeneExp[, -c(1, 2)])) {
+  includedPCWAGgeneExp <- includedPCWAGgeneExp %>%
+    mutate(!!col := (2^(.data[[col]]) - 0.001))
+}
+```
+
+## [Plotting]{.underline}
+
+Now convert columns to rows and the gene as rows to columns...
+
+To begin, I'm going to isolate which samples have MYC amplified, MYC and ERBB2 together, and which have no amplicon data using the raw ecDNA data we began with.
+
+I realized, the data frame "PCWAGid" we made earlier has all the PCWAG samples which are in our amplicon data... anything in there has ecDNA.
+
+```{r}
+ampliconIDs = unique(PCWAGid$icgc_specimen_id)
+ampliconIDs = append(ampliconIDs, grep("^T", unique(overlap$sample_barcode), value = TRUE))
+ampliconIDs = unique(ampliconIDs)
+#There are 897 samples from our total dataset which have amplicon data
+
+nonAmplified = unique(importantIDs[which(!importantIDs %in% ampliconIDs)])
+#Now if an ID is in the nonAmplified vector, it is NOT amplified... 4,059 samples which are non amplified...
+```
+
+Now we have those IDs which have amplicon data and those that don't. Now we need to do something more complex and dive into MYC and ERBB2. We need to find samples which:
+
+-   Have MYC and ERBB2 amplified together on the same amplicon
+
+-   Have ONLY MYC amplified
+
+-   Have ONLY ERBB2 amplified
+
+-   Have MYC and ERBB2 amplified but on different amplicons.
+
+Time to code.
+
+```{r}
+#We will use our basic clean "overlap" data. Need to account for if it is a PCWAG ID.
+TCGAids = unique(grep("^T", ampliconIDs, value = TRUE))
+
+x = unique(PCWAGid$sample_barcode)
+y = unique(PCWAGid$icgc_specimen_id)
+#Need to do unique so we don't get tons of duplicates...
+
+sample_barcode = append(x, TCGAids)
+matching_barcode = append(y, TCGAids)
+
+allIDs = tibble(sample_barcode, matching_barcode)
+
+cleanOverlap = merge(allIDs, overlap, by = "sample_barcode")
+
+rm(x, y, sample_barcode, matching_barcode, TCGAids, allIDs)
+```
+
+"cleanOverlap" now has our amplicon ecDNA data with matching IDs from the PCWAG data in a column that is easy to use. Now we can use this data set to extract MYC and ERBB2 specific information, and easily translate it into gene expression data.
+
+Lets make a big data frame listing the sample ID, and what kind of amplification it has.
+
+```{r}
+#Which have MYC and ERBB2 amplified together on the same amplicon
+samples = c()
+type = c()
+
+barcodes = unique(cleanOverlap$matching_barcode)
+
+for(sample in barcodes) {
+  temp = cleanOverlap[which(cleanOverlap$matching_barcode == sample), ] 
+  #pick the specific samples and lets analyze it
+  
+  if ("MYC" %in% temp$oncogene && "ERBB2" %in% temp$oncogene) {
+    #We know MYC and ERBB2 are in the sample... We just need to figure out if they are on the same amplicon or not.
+    added = FALSE
+    
+    for (amp in temp$ampIndex) {
+      temp2 = temp[which(temp$ampIndex == amp), ]
+      
+      if ("MYC" %in% temp2$oncogene && "ERBB2" %in% temp2$oncogene) {
+        samples = append(samples, sample)
+        type = append(type, "MYC and ERBB2 together")
+        added = TRUE
+        break
+      }
+    }
+    
+    #By now we either broke out of the for loop because the sample was added, or because it ran through and never found an instance of MYC and ERBB2 being on the same amplicon. in that case...
+    if (added == FALSE) {
+      samples = append(samples, sample)
+      type = append(type, "MYC and ERBB2 separate")
+  
+      }
+    
+    
+  } else if ("MYC" %in% temp$oncogene) {
+    #If only MYC is found in the sample...
+    added = FALSE
+    for (amp in temp$ampIndex) {
+      temp2 = temp[which(temp$ampIndex == amp), ]
+      if ("MYC" %in% temp2$oncogene && length(unique(temp2$oncogene)) > 1) {
+        samples = append(samples, sample)
+        type = append(type, "MYC coamplified")
+        added = TRUE
+        break
+        }
+      }
+       if (added == FALSE) {
+        samples = append(samples, sample)
+        type = append(type, "Only MYC amplified")
+  
+      }
+    
+  } else if ("ERBB2" %in% temp$oncogene) {
+    #If only ERBB2 is found in the sample...
+    #added = FALSE
+    #for (amp in temp$ampIndex) {
+     # temp2 = temp[which(temp$ampIndex == amp), ]
+      #if ("ERBB2" %in% temp2$oncogene && length(unique(temp2$oncogene)) > 1) {
+       # samples = append(samples, sample)
+        #type = append(type, "ERBB2 coamplified")
+        #added = TRUE
+        #break
+        #}
+    #}
+    
+       #if (added == FALSE) {
+        samples = append(samples, sample)
+        type = append(type, "Only ERBB2 amplified")
+  
+      #}
+    
+  } else {
+    #If MYC and ERBB2 are both ot found
+    samples = append(samples, sample)
+    type = append(type, "Non-amplified")
+  }
+  
+}
+
+coolStuff = tibble(samples, type)
+
+#> print(sum(coolStuff$type == "MYC and ERBB2 together"))
+#[1] 7
+#> print(sum(coolStuff$type == "MYC and ERBB2 separate"))
+#[1] 2
+#> print(sum(coolStuff$type == "Only MYC amplified"))
+#[1] 116
+#> print(sum(coolStuff$type == "Only ERBB2 amplified"))
+#[1] 65
+
+rm(temp, temp2, added, sample, amp, barcodes, samples, type)
+
+rm(IDs, PCWAGid)
+```
+
+Yay!! We have a data frame indicating the sample and what kind of amplification it has!
+
+Now we need to pick out those samples which have specifically MYC and ERBB2 combinations and PLOT THEM... We will do one plot for PCWAG data and one for TCGA.
+
+-   We will plot the expression levels of MYC and ERBB2 Explicitly. Those are the only expression values we actually need.
+
+### [PCWAG Gene Expression Plot]{.underline}
+
+```{r}
+
+MYCexpression = PCWAGgeneExpression[which(PCWAGgeneExpression$symbol == "MYC"), ]
+#Picked out expression values for MYC, now lets make a table we can plot with one column indicating the type of sample (relationship to MYC and ERBB2), and then one column with the actual gene expression data value.
+
+MYClevel = c()
+type = c()
+ID = c()
+
+#Note: The PCWAG gene expression data only has 156 samples out of 1225 samples that start with "SA" from our dataset...
+
+for (id in colnames(MYCexpression[ , -c(1, 2)])) {
+   
+  if(id %in% nonAmplified) {
+     #means doesn't have amplicon data
+     ID = append(ID, id)
+     type = append(type, "Non-amplified (other)")
+     MYClevel = append(MYClevel, MYCexpression[[id]][1])
+     next #will move on now.
+   }
+  
+  #now we can use "coolstuff" to get more specific.
+  index = which(coolStuff$samples == id)
+  
+  if (coolStuff$type[index] == "Non-amplified") {
+    ID = append(ID, id)
+    type = append(type, "Non-amplified (other)")
+    MYClevel = append(MYClevel, MYCexpression[[id]][1])
+  } else if (coolStuff$type[index] == "Only MYC amplified") {
+    ID = append(ID, id)
+    type = append(type, "Only MYC amplified")
+    MYClevel = append(MYClevel, MYCexpression[[id]][1])
+  } else if (coolStuff$type[index] == "MYC coamplified") {
+    ID = append(ID, id)
+    type = append(type, "MYC coamplified")
+    MYClevel = append(MYClevel, MYCexpression[[id]][1])
+  } else if (coolStuff$type[index] == "Only ERBB2 amplified") {
+    ID = append(ID, id)
+    type = append(type, "Only ERBB2 amplified")
+    MYClevel = append(MYClevel, MYCexpression[[id]][1])
+  } else if (coolStuff$type[index] == "MYC and ERBB2 together") {
+    ID = append(ID, id)
+    type = append(type, "MYC and ERBB2 together")
+    MYClevel = append(MYClevel, MYCexpression[[id]][1])
+  } else if(coolStuff$type[index] == "MYC and ERBB2 separate") {
+    ID = append(ID, id)
+    type = append(type, "MYC and ERBB2 separate")
+    MYClevel = append(MYClevel, MYCexpression[[id]][1])
+  }
+}
+
+plotting = tibble(ID, type, MYClevel)
+rm(ID, type, MYClevel, id, index)
+```
+
+[UPDATE]{.underline}: The PCWAG data set actually doesn't have enough samples from our data with gene expression values :( This will go for ERBB2 as well since the gene expression data will not have enough of the samples to do anything. Let's try with the TCGA data though
+
+```{r}
+ERBB2expression = PCWAGgeneExpression[which(PCWAGgeneExpression$symbol == "ERBB2"), ]
+#unneccessary now ^^
+```
+
+### [TCGA Gene Expression Plot]{.underline}
+
+```{r}
+MYCexpression = TCGAgeneExpression[which(TCGAgeneExpression$symbol == "MYC"), ]
+#Picked out expression values for MYC, now lets make a table we can plot with one column indicating the type of sample (relationship to MYC and ERBB2), and then one column with the actual gene expression data value.
+
+MYClevel = c()
+type = c()
+ID = c()
+
+#Note: The TCGA gene expression dataset only has 1934 out of 3731 TCGA samples from our dataset
+
+for (id in colnames(MYCexpression[ , -c(1, 2)])) {
+   
+  if(id %in% nonAmplified) {
+     #means doesn't have amplicon data
+     ID = append(ID, id)
+     type = append(type, "Non-amplified (other)")
+     MYClevel = append(MYClevel, MYCexpression[[id]][1])
+     next #will move on now.
+   }
+  
+  #now we can use "coolstuff" to get more specific.
+  index = which(coolStuff$samples == id)
+  
+  if (coolStuff$type[index] == "Non-amplified") {
+    ID = append(ID, id)
+    type = append(type, "Non-amplified (other)")
+    MYClevel = append(MYClevel, MYCexpression[[id]][1])
+  } else if (coolStuff$type[index] == "Only MYC amplified") {
+    ID = append(ID, id)
+    type = append(type, "Only MYC amplified")
+    MYClevel = append(MYClevel, MYCexpression[[id]][1])
+  } else if (coolStuff$type[index] == "MYC coamplified") {
+    ID = append(ID, id)
+    type = append(type, "MYC coamplified")
+    MYClevel = append(MYClevel, MYCexpression[[id]][1])
+  } else if (coolStuff$type[index] == "Only ERBB2 amplified") {
+    ID = append(ID, id)
+    type = append(type, "Only ERBB2 amplified")
+    MYClevel = append(MYClevel, MYCexpression[[id]][1])
+  } else if (coolStuff$type[index] == "MYC and ERBB2 together") {
+    ID = append(ID, id)
+    type = append(type, "MYC & ERBB2 together")
+    MYClevel = append(MYClevel, MYCexpression[[id]][1])
+  } else if(coolStuff$type[index] == "MYC and ERBB2 separate") {
+    ID = append(ID, id)
+    type = append(type, "MYC & ERBB2 separate")
+    MYClevel = append(MYClevel, MYCexpression[[id]][1])
+  }
+}
+
+plotting = tibble(ID, type, MYClevel)
+rm(ID, type, MYClevel, id, index)
+
+ordering = c("MYC & ERBB2 together", "MYC & ERBB2 separate", "MYC coamplified", "Only MYC amplified", "Only ERBB2 amplified", "Non-amplified (other)")
+
+sample_counts <- plotting %>%
+  group_by(type) %>%
+  summarise(n = n())
+sample_counts = sample_counts[order(match(sample_counts$type, ordering)), ]
+
+
+ggplot(plotting, aes(x=factor(type, levels = ordering), y=MYClevel)) +
+  geom_boxplot(fill = "cornflowerblue") +
+  labs(x = "Amplification Type", y= "MYC Expression", title = "MYC Gene Expression (TCGA data)") +
+  theme(axis.text.x = element_text(size = 7), panel.grid = element_blank()) + 
+  geom_text(data = sample_counts,
+                   aes(x = type, y = Inf, label = paste0("n = ", n)),
+                   vjust = 2, color = "purple4")
+```
+
+Yay! We've had more luck with the TCGA data set... Now do the same thing for ERBB2...
+
+```{r}
+ERBB2expression = TCGAgeneExpression[which(TCGAgeneExpression$symbol == "ERBB2"), ]
+#Picked out expression values for MYC, now lets make a table we can plot with one column indicating the type of sample (relationship to MYC and ERBB2), and then one column with the actual gene expression data value.
+
+ERBB2level = c()
+type = c()
+ID = c()
+
+#Note: The TCGA gene expression dataset only has 1934 out of 3731 TCGA samples from our dataset
+
+for (id in colnames(ERBB2expression[ , -c(1, 2)])) {
+   
+  if(id %in% nonAmplified) {
+     #means doesn't have amplicon data
+     ID = append(ID, id)
+     type = append(type, "Non-amplified (other)")
+     ERBB2level = append(ERBB2level, ERBB2expression[[id]][1])
+     next #will move on now.
+   }
+  
+  #now we can use "coolstuff" to get more specific.
+  index = which(coolStuff$samples == id)
+  
+  if (coolStuff$type[index] == "Non-amplified") {
+    ID = append(ID, id)
+    type = append(type, "Non-amplified (other)")
+    ERBB2level = append(ERBB2level, ERBB2expression[[id]][1])
+  } else if (coolStuff$type[index] == "Only MYC amplified") {
+    ID = append(ID, id)
+    type = append(type, "Only MYC amplified")
+    ERBB2level = append(ERBB2level, ERBB2expression[[id]][1])
+  } else if (coolStuff$type[index] == "MYC coamplified") {
+    ID = append(ID, id)
+    type = append(type, "MYC coamplified")
+    ERBB2level = append(ERBB2level, ERBB2expression[[id]][1])
+  } else if (coolStuff$type[index] == "Only ERBB2 amplified") {
+    ID = append(ID, id)
+    type = append(type, "Only ERBB2 amplified")
+    ERBB2level = append(ERBB2level, ERBB2expression[[id]][1])
+  } else if (coolStuff$type[index] == "MYC and ERBB2 together") {
+    ID = append(ID, id)
+    type = append(type, "MYC & ERBB2 together")
+    ERBB2level = append(ERBB2level, ERBB2expression[[id]][1])
+  } else if(coolStuff$type[index] == "MYC and ERBB2 separate") {
+    ID = append(ID, id)
+    type = append(type, "MYC & ERBB2 separate")
+    ERBB2level = append(ERBB2level, ERBB2expression[[id]][1])
+  }
+}
+
+plotting = tibble(ID, type, ERBB2level)
+rm(ID, type, ERBB2level, id, index)
+
+ordering = c("MYC & ERBB2 together", "MYC & ERBB2 separate", "MYC coamplified", "Only MYC amplified", "Only ERBB2 amplified", "Non-amplified (other)")
+
+sample_counts <- plotting %>%
+  group_by(type) %>%
+  summarise(n = n())
+
+sample_counts = sample_counts[order(match(sample_counts$type, ordering)), ]
+
+ggplot(plotting, aes(x=factor(type, levels = ordering), y=ERBB2level)) +
+  geom_boxplot(fill = "cornflowerblue") +
+  labs(x = "Amplification Type", y= "ERBB2 Expression", title = "ERBB2 Gene Expression (TCGA data)") +
+  theme(axis.text.x = element_text(size = 7), panel.grid = element_blank()) + 
+  geom_text(data = sample_counts,
+                   aes(x = type, y = Inf, label = paste0("n = ", n)),
+                   vjust = 2, color = "purple4")
+```
+
+[Notes:]{.underline}
+
+CIRCOS BEDPE file, many columns the same row are two oncogenes linked together
+
+want ZERO TRACKS... need 2 , chromosome ring and loops
+
+first amplicon start stop, then second amplicon start stop
+
+bedtools intersect that can count
+
+bedtools merge -c count option
+
+just select MYC and ERBB2 instances
+
+MAKE PLOTS FOR PCWAG AND TCGA SEPARATELY...
+
+New notes:
+
+!. Check if the "submitted specimen ID" has a TCGA ID as well as a PCWAG
+
+remove the extra letter from the ID
+
+2.  Check and make another box plot of MYC co-amplified with SOMETHING ELSE versus MYC is just amplified all on it's own
+
+NOW:
+
+-add LINEAR BACK IN, there is only 10 MYC alone, that will add more
+
+-DECIDE which amplicons are associated with MYC and then go back to segment data and decide which is complex and which is ONLY ONE SEGMENT OF MYC
+
+-   Make 3 groups: non-amplified, MYC-amplified alone, complex MYC amplicon...
+
+## Adding Linear
+
+```{r}
+library(tidyverse)
+library(readxl)
+library(data.table)
+
+# amplicon data
+
+amplicon = read_excel("/Users/haileyjohnson/Desktop/ecDNA_Project/ecDNA_Raw_Data.xlsx", sheet = 1)
+
+#Right now there's giving a unique index to each amplicon in each index
+amplicon$index <- paste0("amp",seq(1:nrow(amplicon)))
+
+length(unique(amplicon$sample_barcode)) #Right now there's 1348 patient samples, and 5791 amplicons from thos patients!
+
+#Time to actually separate out each chromosomal region
+amplicon <- amplicon %>% separate_rows(amplicon_intervals, sep = ",")
+
+amplicon <- amplicon %>% separate(amplicon_intervals, c("chr", "interval"), ":")
+amplicon$chr = paste0("chr", amplicon$chr)
+
+amplicon <- amplicon %>% separate(interval, c("start", "end"), "-")
+
+amplicon$start <- as.numeric(amplicon$start)
+amplicon$end <- as.numeric(amplicon$end)
+
+#We want to remove all the amplicons that are linear?
+#amplicon <- amplicon[amplicon$amplicon_classification != "Linear",]
+
+meta = read_excel("/Users/haileyjohnson/Desktop/ecDNA_Project/ecDNA_Raw_Data.xlsx", sheet = 3)
+
+amplicon <- merge(amplicon, meta, by = "sample_barcode")
+
+columns = c("chr", "start", "end", "amplicon_classification", "sample_barcode", "index", "lineage")
+
+#put it all together and make the bedfile...
+bedFile = amplicon[ ,columns]
+bedFile = bedFile %>% filter(chr != "chrGL000220.1")
+bedFile = bedFile %>% filter(chr != "chrGL000210.1")
+
+#there's actuall way more than I thought...
+bedFile = bedFile[which(!str_detect(bedFile$chr, "chrGL")),]
+```
+
+```{r}
+install.packages("xlsx")
+library("xlsx")
+#Exporting the bedfile
+setwd("/Users/haileyjohnson/Desktop/ecDNA_Project")
+write.xlsx(bedFile, "LinearIncludedecDNA.xlsx")
+```
+
+Run bedtools again... New overlap! yay!
+
+```{r}
+library(tidyverse)
+library(readxl)
+overlap = read_excel("/Users/haileyjohnson/Desktop/ecDNA_Project/LinearOverlap.xlsx")
+colnames(overlap) = c("chr", "start", "stop", "oncogene", "isoform", "Chr", "Start", "Stop", "amplicon", "sample_barcode", "ampIndex", "cancer")
+
+genes = unique(overlap$oncogene)
+
+beasts = c()
+
+for (geneboi in genes) {
+  temp = overlap[which(overlap$oncogene == geneboi), ]
+  temp = temp %>% group_by(isoform) %>% summarise(value = n()) %>% arrange(desc(value))
+  beasts = append(beasts, temp$isoform[1])
+}
+
+cleanedIsoforms = overlap %>% filter(isoform %in% beasts)
+overlap = cleanedIsoforms
+
+setwd("/Users/haileyjohnson/Desktop/ecDNA_Project")
+write.xlsx(cleanedIsoforms, "cleanedLinearOverlap.xlsx")
+
+rm(temp,geneboi,beasts,genes)
+```
+
+Yay. Now we are reading to begin!
+
+First, find which amplicons are associated with MYC.
+
+```{r}
+library(tidyverse)
+library(readxl)
+overlap = read_excel("/Users/haileyjohnson/Desktop/ecDNA_Project/cleanedLinearOverlap.xlsx")
+
+MYCamps = unique(overlap[which(overlap$oncogene == "MYC"), ]$ampIndex)
+
+#Now we can go back and use our original data to decide which is non-amplified, MYC alone, and a MYC complex amplicon
+
+rawData = read_excel("/Users/haileyjohnson/Desktop/ecDNA_Project/bedtools_intersect/LinearIncludedecDNA.xlsx")
+
+rawData <- rawData[substr(rawData$sample_barcode, 1, 1) == "T", ]
+
+#There are 870 unique TCGA IDs in this data, we should have 870 unique IDs in out plotting data frame.
+
+#for every sample {
+
+#if sample associated with MYCamps {
+#  then decide if it is complex with multiple segments or just one (MYC alone)
+#  } else {
+#   It is a non- amplified sample and we can classify it like that and throw it into the dataframe
+#}
+#}
+
+amplicons = c()
+sample_barcode = c()
+type = c()
+
+for (amp in unique(rawData$index)) {
+  
+  if (amp %in% MYCamps) { #if amplicon is associated with MYC
+    
+    temp = rawData[which(rawData$index == amp), ]
+    
+    if (length(temp$chr) > 1) { #More than 1 makes it a complex MYC amplicon
+      amplicons = append(amplicons, amp)
+      sample_barcode = append(sample_barcode, temp$sample_barcode[1])
+      type = append(type, "Complex MYC Amplicon")
+    } else if (length(temp$chr) == 1) {
+      amplicons = append(amplicons, amp)
+      sample_barcode = append(sample_barcode, temp$sample_barcode[1])
+      type = append(type, "MYC Amplified Alone")
+    }
+    
+  } else {
+    temp = rawData[which(rawData$index == amp), ]
+    
+    amplicons = append(amplicons, amp)
+    sample_barcode = append(sample_barcode, temp$sample_barcode[1])
+    type = append(type, "Non-Amplified")
+  }
+  
+}
+
+plotting = tibble(sample_barcode, amplicons, type)
+
+rm(amp, temp, type, amplicons, sample_barcode)
+```
+
+Now we have the "plotting" data frame that tells us which amplicon is associated with MYC. We currently have 51 "Complex MYC" amplicons and 35 amplicons where MYC is amplified alone. Now let's add gene expression values.
+
+I need to scroll up to previous code and import the TCGA gene expression data into my environment variables.
+
+```{r}
+names = which(colnames(TCGAgeneExpression) %in% plotting$sample_barcode)
+TCGAgeneExpression = TCGAgeneExpression[ , c(1, 2, names)]
+TCGAgeneExpression = TCGAgeneExpression %>% filter(symbol == "MYC")
+```
+
+```{r}
+sample_barcode = c()
+MYClevel = c()
+
+for (id in colnames(TCGAgeneExpression[ , -c(1, 2)])) {
+  sample_barcode = append(sample_barcode, id)
+  MYClevel = append(MYClevel, TCGAgeneExpression[[id]][1])
+}
+
+values = tibble(sample_barcode, MYClevel)
+
+plotting = merge(plotting, values, by = "sample_barcode")
+
+rm(id, MYClevel, names, sample_barcode)
+```
+
+```{r}
+ordering = c("Complex MYC Amplicon", "MYC Amplified Alone", "Non-Amplified")
+
+sample_counts <- plotting %>%
+  group_by(type) %>%
+  summarise(n = n())
+
+sample_counts = sample_counts[order(match(sample_counts$type, ordering)), ]
+
+ggplot(plotting, aes(x=factor(type, levels = ordering), y = MYClevel)) +
+  geom_boxplot(fill = "cornflowerblue") +
+  labs(x = "Amplification Type", y= "MYC Expression", title = "MYC Gene Expression (TCGA data)") +
+  theme(axis.text.x = element_text(size = 7), panel.grid = element_blank()) + 
+  geom_text(data = sample_counts,
+                   aes(x = type, y = Inf, label = paste0("n = ", n)),
+                   vjust = 2, color = "purple4")
+```
+
+Statistical Differences:
+
+```{r}
+model <- aov(MYClevel ~ type, data = plotting)
+
+# Perform Tukey HSD test
+tukey_result <- TukeyHSD(model)
+
+# View the pairwise comparisons
+print(tukey_result)
+```
+
+```{r}
+# Perform pairwise t-tests with Bonferroni correction
+pairwise_result <- pairwise.t.test(plotting$MYClevel, plotting$type, p.adjust.method = "bonferroni")
+
+# View the pairwise comparisons
+print(pairwise_result)
+```
+
+```{r}
+setwd("/Users/haileyjohnson/Desktop/ecDNA_Project")
+write.csv(plotting, "plottingGeneExpression.csv")
+```
+
+Add another column- copy number of MYC
+
+divde expression value by the copy number
+
+how to add all oncogenes into the analysis of gene expression per copy number
+
+## Add Copy Number
+
+```{r}
+library(tidyverse)
+library(data.table)
+#install.packages('R.utils')
+library(R.utils)
+
+# Set the file path
+file_path <- "/Users/haileyjohnson/Desktop/ecDNA_Project/TCGA.PANCAN.sampleMap_Gistic2_CopyNumber_Gistic2_all_data_by_genes.gz"
+overlap = read_excel("/Users/haileyjohnson/Desktop/ecDNA_Project/cleanedOverlap.xlsx")
+rawData = read_excel("/Users/haileyjohnson/Desktop/ecDNA_Project/bedtools_intersect/LinearIncludedecDNA.xlsx")
+
+rawData <- rawData[substr(rawData$sample_barcode, 1, 1) == "T", ]
+
+# Import the compressed file
+#data <- fread(gzfile(file_path), header = TRUE)
+data = fread(file_path)
+
+oncogenes = unique(overlap$oncogene) #Oncogenes we filtered out to study earlier
+
+tcgaSamples = c("Sample", colnames(TCGAgeneExpression))
+
+data = data[which(data$Sample %in% oncogenes),]
+data = data %>% select(any_of(tcgaSamples))
+
+rm(file_path)
+```
+
+```{r}
+data = data %>% filter(Sample == "MYC")
+copyNumData = data
+
+#transform log format
+#for (col in colnames(copyNumData[, -c(1)])) {
+ # copyNumData <- copyNumData %>%
+  #  mutate(!!col := (2^(.data[[col]]) * 2))
+#}
+
+#Now we can do gene expression anlysis and divide gene expression by copy number! Run code above... create "Plotting" data frame.. Right before you graph it lets manipulate the data...
+```
+
+```{r}
+plotting = plotting %>% filter(sample_barcode %in% colnames(copyNumData)) #make sure we have all samples which are also in our copy number data... a few which aren't
+
+newGeneExpression = c()
+copyNumber = c()
+
+for (sample in unique(plotting$sample_barcode)) {
+  temp = copyNumData[ , get(sample)]
+  copyNum = temp[1]
+  copyNum = ((2^(copyNum)) * 2)
+  
+  temp = plotting[which(plotting$sample_barcode == sample),]
+  mycExpression = temp$MYClevel
+  newLevel = mycExpression / copyNum
+  
+  #newLevel = rep(newLevel, times = length(temp$MYClevel))
+  
+  copyNumber = append(copyNumber, rep(copyNum, length(newLevel)))
+  
+  newGeneExpression = append(newGeneExpression, newLevel)
+}
+
+plotting$copyNumber = copyNumber
+plotting$newMYClevel = newGeneExpression
+```
+
+NOW PLOT
+
+```{r}
+ordering = c("Complex MYC Amplicon", "MYC Amplified Alone", "Non-Amplified")
+
+sample_counts <- plotting %>%
+  group_by(type) %>%
+  summarise(n = n())
+
+sample_counts = sample_counts[order(match(sample_counts$type, ordering)), ]
+
+ggplot(plotting, aes(x=factor(type, levels = ordering), y = copyNumber)) +
+  geom_boxplot(fill = "cornflowerblue") +
+  labs(x = "Amplification Type", y= "MYC Copy Number", title = "MYC Copy Number (TCGA data)") +
+  theme(axis.text.x = element_text(size = 7), panel.grid = element_blank()) + 
+  geom_text(data = sample_counts,
+                   aes(x = type, y = Inf, label = paste0("n = ", n)),
+                   vjust = 2, color = "purple4")
+```
+
+Transform the copy number values..... it's in a log format...
+
+log2(copy number/ 2) : GO BACKWARDS
+
+How can we include more genes with gene expression to make a stronger case?
+
+How did the paper make a linear regression in Figure 3? Take an average of all genes?
+
+## Housekeeping Genes
+
+-   Take the average of all housekeeping genes
+
+-   For each sample, extract the housekeeping genes, take the average of all the housekeeping genes IN THAT SAMPLE, then normalize MYC by the housekeeping gene expression...
+
+-   malanoma - the absence of a tumor suppressor gene changes the chromatin structure, having that lost will open a ton of new regions...
+
+-   Radon basements...
